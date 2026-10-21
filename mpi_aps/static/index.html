@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MPI-APS Production Planning</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<div id="login" hidden><div class="card"><h2>MPI-APS sign in</h2>
+<label>Access token <input id="tok" type="password" autocomplete="off"></label>
+<div id="demo-users" hidden><label>Demo user (local development only)<select id="demo"></select></label></div>
+<button id="loginbtn" class="primary">Continue</button><p id="loginerr" class="err"></p></div></div>
+<div id="app" hidden>
+<aside id="nav"><div class="brand">MPI-APS<small>Midas Safety</small></div><nav id="menu" aria-label="Main navigation"></nav>
+<button id="collapse" aria-label="Collapse navigation">&laquo;</button></aside>
+<div id="main">
+<header id="top"><div class="filters">
+<label>Plan <select id="f-plan"></select></label><label>Plant <select id="f-plant"></select></label>
+<label>Process <select id="f-process"><option value="">All</option><option>knitting</option><option>dipping</option><option>packing</option></select></label>
+<label>Due from <input type="date" id="f-from"></label><label>to <input type="date" id="f-to"></label></div>
+<div class="right"><span id="banner" class="banner"></span><button id="bell" aria-label="Exceptions">&#9888; <b id="bellc">0</b></button><span id="who"></span><button id="logout">Sign out</button></div></header>
+<div id="content-wrap"><main id="content" tabindex="-1"></main><aside id="panel" hidden><button id="panel-x" aria-label="Close panel">&times;</button><div id="panel-body"></div></aside></div>
+</div></div>
+<dialog id="dlg"><form method="dialog" id="dlg-form"><h3 id="dlg-title"></h3><div id="dlg-body"></div><menu><button value="cancel">Cancel</button><button value="ok" class="primary" id="dlg-ok">OK</button></menu></form></dialog>
+<script src="app.js"></script></body></html>

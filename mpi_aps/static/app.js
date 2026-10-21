@@ -208,12 +208,35 @@ VIEWS.exceptions = async c => {
 
 VIEWS.master = async c => {
   const d = await api('/api/validation'); const tab = window.__mtab || 'findings';
-  c.innerHTML = H('Master Data & Validation', `${d.summary.errors} errors, ${d.summary.warnings} warnings. Nothing is auto-repaired; similar names are never matched.`) + `<div class="tabs">${[['findings','Findings'],['mapping','SKU → resource mapping'],['rates','Rate comparison']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="mt"></div>`;
+  c.innerHTML = H('Master Data & Validation', `${d.summary.errors} errors, ${d.summary.warnings} warnings. Nothing is auto-repaired; similar names are never matched.`) + `<div class="tabs">${[['findings','Findings'],['mapping','SKU → resource mapping'],['rates','Rate comparison'],...(can('master_data') ? [['import','Import / export']] : [])].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="mt"></div>`;
   c.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { window.__mtab = b.dataset.t; nav('master'); });
+  if (tab === 'import') return masterImport($('#mt'));
   if (tab === 'findings') mountTable($('#mt'), [{k:'severity',t:'Severity',f:r => chip(r.severity)},{k:'check',t:'Check'},{k:'code',t:'Code'},{k:'message',t:'Message'},{k:'records',t:'Affected records',f:r => esc(r.records.slice(0, 8).join(', ') + (r.records.length > 8 ? ` … +${r.records.length - 8}` : ''))},{k:'action',t:'Action'}], d.findings, {name:'validation'});
   if (tab === 'mapping') mountTable($('#mt'), [{k:'sku',t:'SKU'},{k:'plant',t:'Plant'},{k:'process',t:'Process'},{k:'status',t:'Status',f:r => r.status === 'ok' ? chip('scheduled') : chip('blocked')},{k:'eligible',t:'Eligible resources (recipe, rate, basis, validation)',f:r => esc(r.eligible.map(e => `${e.resource} [${e.recipe}] ${e.rate} ${e.unit} ${e.basis}/${e.validation}`).join(' | ') || '–')},{k:'rejected',t:'Why not',f:r => esc([...new Set(r.rejected.map(x => x.reason))].join(', '))}], d.mapping, {name:'mapping'});
   if (tab === 'rates') mountTable($('#mt'), [{k:'sku',t:'SKU'},{k:'plant',t:'Plant'},{k:'process',t:'Process'},{k:'resource',t:'Resource'},{k:'recipe',t:'Recipe'},{k:'sap_standard',t:'SAP standard'},{k:'demonstrated',t:'Demonstrated'},{k:'planned',t:'Planned'},{k:'unit',t:'Unit'},{k:'demonstrated_vs_sap_pct',t:'Demo vs SAP %'},{k:'basis',t:'Basis'},{k:'validation',t:'Validation'},{k:'actual',t:'Actual'}], d.rates, {name:'rates'});
 };
+
+async function download(path, name) {
+  const h = {}; if (AUTH?.token) h['Authorization'] = 'Bearer ' + AUTH.token; else if (AUTH?.demo) h['X-Demo-User'] = AUTH.demo;
+  const r = await fetch(path, {headers: h}); if (!r.ok) return toast('Download failed: ' + r.status, 1);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click();
+}
+async function masterImport(host) {
+  const st = (await api('/api/master/status')).entities;
+  host.innerHTML = `<div class="note">Each file is a <b>complete snapshot</b> that replaces that entity (sample or previously uploaded). Strict mode (default) applies nothing if any row is rejected. Cross-entity problems are listed under Findings after loading. Download the template or export the current data to see the exact columns.</div>
+  <div class="card"><div class="tools"><label>Entity <select id="me">${st.map(e => `<option>${e.entity}</option>`).join('')}</select></label><label>File <input type="file" id="mf" accept=".csv"></label><label>Control: expected rows <input type="number" id="mc"></label>
+  <label style="flex-direction:row"><input type="checkbox" id="ms" checked> Strict (all-or-nothing)</label><button class="primary" id="mgo">Import</button></div></div><div id="mres"></div><h2>Status by entity</h2><div id="mst"></div>`;
+  mountTable($('#mst'), [{k:'entity',t:'Entity'},{k:'source',t:'Data source',f:r => r.source === 'upload' ? '<b class="ok">● upload</b>' : '<span class="warn">▲ sample</span>'},{k:'rows',t:'Rows'},{k:'file',t:'File'},{k:'by',t:'By'},{k:'at',t:'At',f:r => fmt(r.at)},{k:'feeds',t:'Freshness source'},
+    {k:'x',t:'',f:r => `<button data-t="${r.entity}">Template</button> <button data-x="${r.entity}">Export current</button> ${r.source === 'upload' ? `<button data-r="${r.entity}">Revert to sample</button>` : ''}`}], st);
+  host.querySelectorAll('[data-t]').forEach(b => b.onclick = () => download(`/api/templates/${b.dataset.t}.csv`, `${b.dataset.t}_template.csv`));
+  host.querySelectorAll('[data-x]').forEach(b => b.onclick = () => download(`/api/master/${b.dataset.x}/export.csv`, `${b.dataset.x}.csv`));
+  host.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { const r = await dialog('Revert ' + b.dataset.r + ' to sample data', '<label>Reason<textarea name="reason"></textarea></label>'); if (!r) return; try { await api('/api/master/' + b.dataset.r, {method:'DELETE', body:{reason: r.reason}}); nav('master'); } catch (e) { toast(e.message, 1); } });
+  $('#mgo').onclick = async () => { const f = $('#mf').files[0]; if (!f) return toast('Choose a file first.', 1);
+    try { const r = await post(`/api/master/${$('#me').value}/import`, {csv: await f.text(), file_name: f.name, control_rows: $('#mc').value, strict: $('#ms').checked});
+      $('#mres').innerHTML = `<div class="note"><b>${r.applied ? 'Applied ✔' : 'NOT applied ✖'}</b> – rows ${r.rows_in_file}, accepted ${r.accepted}, rejected ${r.rejected}${r.rows_difference !== undefined ? `, row diff vs control ${r.rows_difference}` : ''}. ${esc(r.note || '')}${r.post_import_validation ? ` Validation now: ${r.post_import_validation.errors} errors, ${r.post_import_validation.warnings} warnings.` : ''}</div>${r.rejected_records.length ? `<table><tr><th>Row</th><th>Key</th><th>Errors</th></tr>${r.rejected_records.map(x => `<tr><td>${x.row}</td><td>${esc(x.key)}</td><td>${esc(x.errors.join('; '))}</td></tr>`).join('')}</table>` : ''}`;
+      await loadMeta(); if (r.applied) masterImport(host);
+    } catch (e) { toast(e.message, 1); } };
+}
 
 VIEWS.refresh = async c => {
   const d = await api('/api/refresh');

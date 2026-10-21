@@ -17,3 +17,11 @@ Every record has `origin` ∈ sample | upload | sap_live | estimate | manual. Id
 | Audit event | user, timestamp, action, entity, previous, new, reason, plan status |
 | Refresh record | source, origin, attempted_at, success, file, rows, accepted/rejected, reconciliation report |
 Not yet modelled: sales-order schedule lines, production orders/confirmations (actuals), customer-specific packaging requirements, FEFO batches, per-shift calendars by resource group, plant transfers/lead times.
+
+## Master-data CSV formats (`GET /api/templates/{entity}.csv`, `GET /api/master/{entity}/export.csv`)
+Entities: plants, resources, downtimes, skus, routings, versions, rates, stocks, raw_stocks, receipts, boms, changeovers, material_rules.
+Conventions: UTF-8 CSV with header; dates ISO `yyyy-mm-dd`, datetimes ISO `yyyy-mm-ddThh:mm` (naive plant-local); decimals with `.`; booleans `Y/N`;
+blank optional cells = none. `plants.shifts` = `6-14;14-22`; `working_weekdays` = `0,1,2,3,4,5` (Mon=0); `holidays` = `;`-separated dates.
+`rates`: `kind` = sap_standard|demonstrated|planned; `basis` = gross|net|unknown; `validation_status` = validated|unvalidated|rejected; `unit` e.g. `dozens/machine-hour`.
+Key columns (duplicates rejected): plants[plant]; resources[resource]; downtimes[resource,start]; skus[sku]; routings[sku,plant,seq]; versions[sku,plant,process,recipe,valid_from];
+rates[sku,plant,process,resource,recipe,kind,effective_from]; stocks[sku,plant,stage]; raw_stocks[material,plant]; receipts[material,plant,date]; boms[sku,component]; changeovers[process]; material_rules[material].

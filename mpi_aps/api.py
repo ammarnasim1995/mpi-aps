@@ -83,6 +83,19 @@ def make_routes(svc: AppService):
         _need(b, "op", "resource", "reason")
         return svc.move(pr, m[0], b["op"], b["resource"], b.get("not_before"), b["reason"], b.get("recipe"))
 
+    route("GET", "/api/master/status", "view")(lambda pr, q, b, m: {"entities": svc.master_status(pr)})
+    route("GET", r"/api/master/([a-z_]+)/export\.csv", "view")(lambda pr, q, b, m: ("text/csv", svc.master_export(pr, m[0])))
+    route("GET", r"/api/templates/([a-z_]+)\.csv", "view")(lambda pr, q, b, m: ("text/csv", svc.master_template(m[0])))
+
+    @route("POST", r"/api/master/([a-z_]+)/import", "master_data")
+    def _mimp(pr, q, b, m):
+        _need(b, "csv", "file_name")
+        return svc.import_master(pr, m[0], b["csv"], b["file_name"], b.get("control_rows"), b.get("strict", True) is not False)
+
+    @route("DELETE", r"/api/master/([a-z_]+)", "master_data")
+    def _mrev(pr, q, b, m):
+        return svc.revert_master(pr, m[0], b.get("reason"))
+
     @route("POST", "/api/orders/import", "import")
     def _imp(pr, q, b, m):
         _need(b, "csv", "file_name")

@@ -33,6 +33,9 @@ MIGRATIONS = [
     (3, """
     CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """),
+    (4, """
+    CREATE TABLE master_rows(entity TEXT NOT NULL, row_no INTEGER NOT NULL, payload TEXT NOT NULL, import_id INTEGER, PRIMARY KEY(entity, row_no));
+    """),
 ]
 
 
@@ -181,6 +184,21 @@ class Store:
 
     def overrides(self) -> dict:
         return {r["order_key"]: (r["rank"], r["reason"], r["user"]) for r in self.conn.execute("SELECT * FROM overrides")}
+
+    def master_replace(self, entity, rows, import_id=None) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM master_rows WHERE entity=?", (entity,))
+            self.conn.executemany("INSERT INTO master_rows VALUES(?,?,?,?)", [(entity, i, json.dumps(r), import_id) for i, r in enumerate(rows)])
+
+    def master_rows(self, entity):
+        return [json.loads(r["payload"]) for r in self.conn.execute("SELECT payload FROM master_rows WHERE entity=? ORDER BY row_no", (entity,))]
+
+    def master_delete(self, entity) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM master_rows WHERE entity=?", (entity,))
+
+    def master_entities(self) -> dict:
+        return {r[0]: r[1] for r in self.conn.execute("SELECT entity, COUNT(*) FROM master_rows GROUP BY entity")}
 
     def kv_get(self, key, default=None):
         r = self.conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()

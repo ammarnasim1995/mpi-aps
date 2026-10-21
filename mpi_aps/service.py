@@ -12,6 +12,7 @@ from mpi_aps_core.settings import Approval, CureRule, EfficiencyFactor, Freshnes
 
 from . import analytics as an
 from . import importer
+from . import master_import as mi
 from .auth import Principal
 from .model import Order, RefreshInfo
 from .planner import Ctx, ScheduleCycle, apply_decisions, apply_move, generate, validate_schedule
@@ -70,6 +71,14 @@ class AppService:
             inp = build_sample(self.plan_date, now=self.now())
             for op in self.store.kv_get("settings_ops", []):
                 self._apply_setting(inp, op, replay=True)
+            loaded = self.store.master_entities()
+            for ent in ("plants", "resources", "downtimes", "skus", "routings", "versions", "rates", "stocks", "raw_stocks",
+                        "receipts", "boms", "changeovers", "material_rules"):
+                if ent in loaded:
+                    objs, rej = mi.parse_rows(ent, self.store.master_rows(ent))
+                    if rej:
+                        log.error("stored master data failed to re-parse", extra={"ctx": {"entity": ent, "rejected": len(rej)}})
+                    mi.apply(inp, ent, objs)
             if self.store.kv_get("sample_orders_removed", False):
                 inp.orders = [o for o in inp.orders if o.origin != "sample"]
             have = {o.key for o in inp.orders}
@@ -168,11 +177,16 @@ class AppService:
 
     def origins(self) -> dict:
         c = {}
-        for coll in (self.inp.orders, self.inp.stocks, self.inp.raw_stocks, self.inp.resources.values()):
+        for coll in (self.inp.orders, self.inp.stocks, self.inp.raw_stocks, self.inp.resources.values(), self.inp.plants.values(),
+                     self.inp.skus.values(), self.inp.routings, self.inp.versions, self.inp.receipts, self.inp.boms):
             for x in coll:
                 c[x.origin] = c.get(x.origin, 0) + 1
-        for r in self.inp.rates:                      # core rate records carry `source`, not `origin`
-            o = "sample" if r.source.startswith("SAMPLE") else "upload"
+        up = self.store.master_entities()
+        for r in self.inp.rates:                      # core rate records carry `source`, not `origin`; origin = how the data arrived
+            o = "upload" if "rates" in up else ("sample" if r.source.startswith("SAMPLE") else "upload")
+            c[o] = c.get(o, 0) + 1
+        for ch in self.inp.changeovers.values():
+            o = "upload" if "changeovers" in up else ("sample" if ch.source.startswith("SAMPLE") else "upload")
             c[o] = c.get(o, 0) + 1
         return c
 
@@ -536,6 +550,74 @@ class AppService:
                              "replace sample orders" if replace_sample else "append", "n/a")
             self.rebuild()
             return rep
+
+    # ------------------------------------------------------------------ master data
+    def master_status(self, pr):
+        loaded, meta = self.store.master_entities(), self.store.kv_get("master_meta", {})
+        return [{"entity": e, "source": "upload" if e in loaded else "sample", "rows": loaded.get(e, len(mi.to_rows(e, self.inp))),
+                 "file": meta.get(e, {}).get("file"), "by": meta.get(e, {}).get("user"), "at": meta.get(e, {}).get("ts"),
+                 "feeds": mi.SOURCE_OF[e], "columns": mi.SPECS[e][0]} for e in mi.SPECS]
+
+    def master_export(self, pr, entity):
+        if not (pr.can("master_data") or pr.can("view_all_plants")):
+            raise Forbidden("Exporting master data requires master_data or view_all_plants.")
+        if entity not in mi.SPECS:
+            raise BadRequest(f"Unknown entity '{entity}'.")
+        return mi.to_csv(entity, self.inp)
+
+    def master_template(self, entity):
+        if entity not in mi.SPECS:
+            raise BadRequest(f"Unknown entity '{entity}'.")
+        return mi.template(entity)
+
+    def import_master(self, pr, entity, text, file_name, control_rows=None, strict=True):
+        self._need(pr, "master_data")
+        with self.lock:
+            try:
+                rows, objs, rej = mi.parse_csv(entity, text)
+            except ValueError as e:
+                self.store.log_refresh(mi.SOURCE_OF.get(entity, "master_data"), "upload", False, file_name, errors=[str(e)], user=pr.user)
+                self.rebuild()
+                raise BadRequest(str(e))
+            rep = {"entity": entity, "rows_in_file": len(rows), "accepted": len(objs), "rejected": len(rej), "rejected_records": rej,
+                   "strict": bool(strict)}
+            if control_rows not in (None, ""):
+                rep["control_rows"], rep["rows_difference"] = int(control_rows), len(rows) - int(control_rows)
+            rep["reconciled"] = (len(objs) + len(rej) == len(rows) and not rej and rep.get("rows_difference", 0) == 0)
+            src = mi.SOURCE_OF[entity]
+            if (rej and strict) or not objs:
+                rep["applied"] = False
+                rep["note"] = ("Nothing was applied (strict mode: any rejected row blocks the load)." if rej else "File contains no valid rows.")
+                self.store.log_refresh(src, "upload", False, file_name, len(rows), len(objs), len(rej), rep, [rep["note"]], pr.user)
+                self.store.audit(pr.user, f"import.master.{entity}.rejected", f"file:{file_name}", None, {"rejected": len(rej)}, "strict load refused", "n/a")
+                self.rebuild()
+                return rep
+            iid = self.store.log_refresh(src, "upload", True, file_name, len(rows), len(objs), len(rej), rep, [], pr.user)
+            self.store.master_replace(entity, [r for _, r in objs], iid)
+            meta = self.store.kv_get("master_meta", {})
+            meta[entity] = {"file": file_name, "user": pr.user, "ts": self.now().isoformat(timespec="seconds")}
+            self.store.kv_set("master_meta", meta)
+            self.store.audit(pr.user, f"import.master.{entity}", f"file:{file_name}", {"source": "previous set"}, {"rows": len(objs), "rejected": len(rej)},
+                             "replace entity snapshot", "n/a")
+            self.rebuild()
+            rep["applied"] = True
+            rep["post_import_validation"] = val.summarise(val.validate(self.inp))
+            rep["note"] = "Existing drafts are now stale; generate a new draft. Cross-entity inconsistencies are listed on Master Data → Findings."
+            return rep
+
+    def revert_master(self, pr, entity, reason):
+        self._need(pr, "master_data")
+        if entity not in mi.SPECS:
+            raise BadRequest(f"Unknown entity '{entity}'.")
+        if not reason or not reason.strip():
+            raise BadRequest("A reason is required.")
+        self.store.master_delete(entity)
+        meta = self.store.kv_get("master_meta", {})
+        meta.pop(entity, None)
+        self.store.kv_set("master_meta", meta)
+        self.store.audit(pr.user, f"master.revert.{entity}", entity, "upload", "sample", reason, "n/a")
+        self.rebuild()
+        return {"reverted": True}
 
     def acknowledge_stale(self, pr, source, reason):
         self._need(pr, "ack_stale")

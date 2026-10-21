@@ -82,6 +82,12 @@ def validate(inp: PlanInput) -> list[dict]:
                     out.append(_f("recipe_sequence", "error", iss[0].code, f"{sku}@{plant}: {iss[0].message}", [f"{sku}@{plant}"],
                                   "Maintain an approved cure/processing rule for the coating or SKU (settings)."))
 
+    have_bom = {b.sku for b in inp.boms}
+    for sku in sorted({s for s, _ in pairs}):
+        if sku not in have_bom and any(r.process == "knitting" for r in inp.routings if r.sku == sku):
+            out.append(_f("units", "warning", "BOM_MISSING", f"{sku} has no BOM: material constraints are NOT applied to its knitting.", [sku],
+                          "Load the BOM (components and quantity per pair)."))
+
     # --- recipes / eligibility / rates
     rate_recipes = {(r.sku, r.plant, r.process, r.recipe) for r in inp.rates}
     for v in inp.versions:
@@ -148,6 +154,9 @@ def validate(inp: PlanInput) -> list[dict]:
         if min(s.qty, s.allocated, s.blocked) < 0 or s.allocated + s.blocked > s.qty:
             out.append(_f("quantities", "error", "IMPOSSIBLE_STOCK", f"{s.sku}@{s.plant}/{s.stage}: allocated+blocked exceeds stock or negative.", [f"{s.sku}@{s.plant}/{s.stage}"], "Correct inventory source."))
     for r in inp.resources.values():
+        if r.plant not in inp.plants:
+            out.append(_f("calendar", "error", "RESOURCE_PLANT_UNKNOWN", f"Resource {r.id} references unknown plant {r.plant}.", [r.id], "Load the plant (with calendar) or correct the resource."))
+            continue
         sp = r.calendar or inp.plants[r.plant].calendar
         if not sp.shifts or not sp.working_weekdays:
             out.append(_f("calendar", "error", "NO_WORKING_TIME", f"{r.id} has no shifts/working days.", [r.id], "Maintain the calendar."))

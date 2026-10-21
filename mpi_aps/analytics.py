@@ -146,7 +146,7 @@ def capacity(inp: PlanInput, sched: Schedule, period: str = "week", plant: str =
     buckets = _buckets(inp, sched, period)
     rows = []
     for res in inp.resources.values():
-        if (plant and res.plant != plant) or (process and res.process != process):
+        if (plant and res.plant != plant) or (process and res.process != process) or res.plant not in inp.plants:
             continue
         spec = calendar_for(res, inp.plants)
         segs = [(s, o) for o in sched.ops.values() if o.resource == res.id for s in o.segments]
@@ -193,6 +193,8 @@ def rough_cut(inp: PlanInput, sched: Schedule, ctx: Optional[Ctx] = None) -> dic
     out = []
     for rid, per in demand.items():
         res = inp.resources[rid]
+        if res.plant not in inp.plants:
+            continue
         spec = calendar_for(res, inp.plants)
         cum_d = cum_c = 0.0
         worst = 0.0
@@ -222,6 +224,8 @@ def bottlenecks(inp: PlanInput, sched: Schedule, rows: Optional[list] = None) ->
                 limited[step["resource"]].add(ok)
     res_rows = []
     for res in inp.resources.values():
+        if res.plant not in inp.plants:
+            continue
         ops = [o for o in sched.ops.values() if o.resource == res.id and o.finish]
         if not ops:
             continue

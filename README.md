@@ -13,6 +13,8 @@ cd mpi-aps-core
 MPI_DEV_AUTH=1 python3 -m mpi_aps          # http://127.0.0.1:8080  (demo users, loopback only)
 PYTHONPATH=. python3 -m unittest discover -s tests -t . -v      # run the tests
 ```
+**Loading your real data:** sign in as `demo.admin` → *Master Data & Validation* → *Import / export*. Download the template (or export the sample) for each entity, fill it, import. Load plants → resources → SKUs → routings → versions → rates → stock/BOMs → changeovers; then review *Findings* (cross-entity problems are reported, never repaired). Efficiency factors and cure rules are set on *Planning Settings*. Orders import is on *Demand & Orders*. Data origin is tagged by upload channel.
+
 Sign in with a demo user (e.g. `demo.admin`, `demo.central`, `demo.central2`, `demo.pk_planner`, `demo.management`).
 `MPI_DEV_AUTH=1` is refused unless `MPI_HOST` is loopback.
 
@@ -45,15 +47,16 @@ speaks plain HTTP.
 | Data-quality validation + SKU→resource mapping matrix + SAP-vs-demonstrated rate comparison | **Implemented, tested** |
 | RBAC + plant scoping (server-side), structured logging, input validation, migrations | **Implemented, tested** |
 | UI: 15 screens incl. Gantt with drag-and-drop | **Implemented**; browser-verified (see below) |
-| **Master-data maintenance screens** (create/edit SKU, resource, rate, routing, calendar) and CSV import of those | **Planned** — master data currently comes from `sample.py`; only settings (efficiency, cure, freshness) and orders are editable |
+| **Master-data CSV import / export** (plants+calendars, resources, downtimes, SKUs, routings, production versions, rates, FG/WIP stock, raw stock, receipts, BOMs, changeover rules, material rules): per-entity complete-snapshot replace, strict all-or-nothing by default, row validation, duplicate-key rejection, row-count reconciliation, persisted, audited, revert-to-sample, templates and export of current data | **Implemented, tested** (Master Data → Import / export) |
+| Row-by-row **editing screens** for master data, resource-specific calendar exceptions | **Planned** — change data by re-importing the entity snapshot |
 | **SAP adapters** (HANA views/RFC/OData), scheduled refresh | **Planned** — interface and mapping proposal in `docs/SAP_INTEGRATION.md`; nothing connected |
 | **Execution & performance** (actuals, plan adherence, downtime, rejection) | **Planned** — screen states this explicitly; no numbers shown |
 | Backward scheduling / latest-start slack; allocation rules FIFO/FEFO; weighted-objective UI; saved filters; bulk assignment; scenario→draft promotion; AI narration | **Planned** |
 | PostgreSQL, multi-process deployment, SSO | **Planned** (single process + global lock today) |
 
 ## Verification actually performed
-* `PYTHONPATH=. python3 -W error::ResourceWarning -m unittest discover -s tests -t .` → **65 tests, OK** (28 core + 37 application:
-  calendar, requirements, scheduling, 15 acceptance scenarios, data quality, RBAC, HTTP boundary).
+* `PYTHONPATH=. python3 -W error::ResourceWarning -m unittest discover -s tests -t .` → **75 tests, OK** (28 core + 47 application:
+  calendar, requirements, scheduling, 15 acceptance scenarios, data quality, master-data import/export round-trip, RBAC, HTTP boundary).
 * Headless Chromium: all 15 screens render without script errors; Gantt drag-and-drop exercised (valid move applied and downstream
   recalculated; invalid moves rejected with reasons; all audited). Found and fixed two UI defects this way.
 * Not verified: behaviour on real Midas data, real SAP data, PostgreSQL, concurrent multi-user load, browsers other than Chromium.

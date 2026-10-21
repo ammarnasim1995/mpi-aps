@@ -55,6 +55,24 @@ class Http(unittest.TestCase):
         self.assertEqual(s, 404)
         self.assertEqual(json.loads(b)["error"]["code"], "not_found")
 
+    def test_master_import_over_http(self):
+        s, b = self.call("/api/master/skus/export.csv", "demo.admin")
+        self.assertEqual(s, 200)
+        csv = b.decode()
+        self.assertTrue(csv.startswith("sku,material,description"))
+        self.assertEqual(self.call("/api/master/skus/import", "demo.pk_planner", "POST", {"csv": csv, "file_name": "s.csv"})[0], 403)
+        s, b = self.call("/api/master/skus/import", "demo.admin", "POST", {"csv": csv.replace("MAT-1001", ""), "file_name": "bad.csv"})
+        self.assertEqual(s, 200)
+        rep = json.loads(b)
+        self.assertFalse(rep["applied"])
+        self.assertGreaterEqual(rep["rejected"], 1)
+        s, b = self.call("/api/master/skus/import", "demo.admin", "POST", {"csv": csv, "file_name": "ok.csv", "control_rows": csv.count(chr(10)) - 1})
+        self.assertTrue(json.loads(b)["applied"])
+        st = {e["entity"]: e for e in json.loads(self.call("/api/master/status", "demo.admin")[1])["entities"]}
+        self.assertEqual(st["skus"]["source"], "upload")
+        self.assertEqual(self.call("/api/master/skus", "demo.admin", "DELETE", {"reason": "test revert"})[0], 200)
+        self.assertEqual(self.call("/api/templates/nonsense.csv", "demo.admin")[0], 400)
+
     def test_static_path_traversal_blocked_and_headers(self):
         self.assertEqual(self.call("/../../etc/passwd")[0], 404)
         self.assertEqual(self.call("/%2e%2e/%2e%2e/etc/passwd")[0], 404)
